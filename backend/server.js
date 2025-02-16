@@ -1,24 +1,70 @@
 import express from "express";
 import helmet from "helmet";
-import cors from "cors";
 import morgan from "morgan";
+import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
 
 import productRoutes from "./routes/productRoutes.js";
 import { sql } from "./config/db.js";
+import { aj } from "./lib/arcjet.js";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-// console.log(PORT);
+const __dirname = path.resolve();
+
+app.use(express.json());
+app.use(cors());
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  })
+); // helmet is a security middleware that helps you protect your app by setting various HTTP headers
+app.use(morgan("dev")); // log the requests
+
+// apply arcjet rate-limit to all routes
+app.use(async (req, res, next) => {
+  try {
+    const decision = await aj.protect(req, {
+      requested: 1, // specifies that each request consumes 1 token
+    });
+
+    if (decision.isDenied()) {
+      if (decision.reason.isRateLimit()) {
+        res.status(429).json({ error: "Too Many Requests" });
+      } else if (decision.reason.isBot()) {
+        res.status(403).json({ error: "Bot access denied" });
+      } else {
+        res.status(403).json({ error: "Forbidden" });
+      }
+      return;
+    }
+
+    // check for spoofed bots
+    if (decision.results.some((result) => result.reason.isBot() && result.reason.isSpoofed())) {
+      res.status(403).json({ error: "Spoofed bot detected" });
+      return;
+    }
+
+    next();
+  } catch (error) {
+    console.log("Arcjet error", error);
+    next(error);
+  }
+});
 
 app.use("/api/products", productRoutes);
 
-app.use(express.json()); // This will allows us to parse incomming data
-app.use(cors());
-app.use(helmet()); // Helmet is a security middlware that helps you Protect Your App by setting various HTTP Headers
-app.use(morgan("dev"));
+if (process.env.NODE_ENV === "production") {
+  // server our react app
+  app.use(express.static(path.join(__dirname, "/frontend/dist")));
+
+  app.get("*", (req, res) => {
+    res.sendFile(path.resolve(__dirname, "frontend", "dist", "index.html"));
+  });
+}
 
 async function initDB() {
   try {
@@ -32,19 +78,14 @@ async function initDB() {
       )
     `;
 
-    console.log("Database Initialized Successfully");
+    console.log("Database initialized successfully");
   } catch (error) {
-    console.log("Error in initDB", error);
+    console.log("Error initDB", error);
   }
 }
 
-app.get("/test", (req, res) => {
-  console.log(res.getHeaders());
-  res.send("Hello From Test Route");
-});
-
 initDB().then(() => {
   app.listen(PORT, () => {
-    console.log(`Server is Running on Port:${PORT}`);
+    console.log("Server is running on port " + PORT);
   });
 });
