@@ -23,34 +23,33 @@ app.use(morgan("dev"));
 app.use(async (req, res, next) => {
   try {
     const decision = await aj.protect(req, {
-      requested: 1, // Specifies that each request consumes 1 token
+      requested: 1, // specifies that each request consumes 1 token
     });
 
     if (decision.isDenied()) {
       if (decision.reason.isRateLimit()) {
-        return res.status(429).json({ error: "Too Many Requests" });
-      } else if (decision.reason.isBolt()) {
-        return res.status(403).json({ error: "Bot Access Denied" });
+        res.status(429).json({ error: "Too Many Requests" });
+      } else if (decision.reason.isBot()) {
+        res.status(403).json({ error: "Bot access denied" });
       } else {
-        return res.status(403).json({ error: "Forbidden" });
+        res.status(403).json({ error: "Forbidden" });
       }
+      return;
     }
 
-    // Check for spoofed bots
-    if (
-      decision.results.some(
-        (result) => result.reason.isBot() && result.reason.isSpoofed()
-      )
-    ) {
-      return res.status(403).json({ error: "Spoofed Bot Detected" });
+    // check for spoofed bots
+    if (decision.results.some((result) => result.reason.isBot() && result.reason.isSpoofed())) {
+      res.status(403).json({ error: "Spoofed bot detected" });
+      return;
     }
 
     next();
   } catch (error) {
-    console.error("Arcjet error", error);
+    console.log("Arcjet error", error);
     next(error);
   }
 });
+
 
 app.use("/api/products", productRoutes);
 
